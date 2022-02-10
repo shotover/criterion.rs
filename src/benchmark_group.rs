@@ -40,10 +40,10 @@ use std::time::Duration;
 ///     // We can also use loops to define multiple benchmarks, even over multiple dimensions.
 ///     for x in 0..3 {
 ///         for y in 0..3 {
-///             let point = (x, y);
+///             let point = || { (x, y) };
 ///             let parameter_string = format!("{} * {}", x, y);
-///             group.bench_with_input(BenchmarkId::new("Multiply", parameter_string), &point,
-///                 |b, (p_x, p_y)| b.iter(|| p_x * p_y));
+///             group.bench_with_input(BenchmarkId::new("Multiply", parameter_string), point,
+///                 |b, (p_x, p_y)| b.iter(|| *p_x * *p_y));
 ///         }
 ///     }
 ///    
@@ -55,7 +55,7 @@ use std::time::Duration;
 ///     
 ///     for size in [1024, 2048, 4096].iter() {
 ///         // Generate input of an appropriate size...
-///         let input = vec![1u64, *size];
+///         let input = || vec![1u64, *size];
 ///
 ///         // We can use the throughput function to tell Criterion.rs how large the input is
 ///         // so it can calculate the overall throughput of the function. If we wanted, we could
@@ -63,9 +63,9 @@ use std::time::Duration;
 ///         // number of samples for extremely large and slow inputs) or even different functions.
 ///         group.throughput(Throughput::Elements(*size as u64));
 ///
-///         group.bench_with_input(BenchmarkId::new("sum", *size), &input,
+///         group.bench_with_input(BenchmarkId::new("sum", *size), input,
 ///             |b, i| b.iter(|| i.iter().sum::<u64>()));
-///         group.bench_with_input(BenchmarkId::new("fold", *size), &input,
+///         group.bench_with_input(BenchmarkId::new("fold", *size), input,
 ///             |b, i| b.iter(|| i.iter().fold(0u64, |a, b| a + b)));
 ///     }
 ///
@@ -251,29 +251,29 @@ impl<'a, M: Measurement> BenchmarkGroup<'a, M> {
     where
         F: FnMut(&mut Bencher<'_, M>),
     {
-        self.run_bench(id.into_benchmark_id(), &(), |b, _| f(b));
+        self.run_bench(id.into_benchmark_id(), move || (), |b, _| f(b));
         self
     }
 
     /// Benchmark the given parameterized function inside this benchmark group.
-    pub fn bench_with_input<ID: IntoBenchmarkId, F, I>(
+    pub fn bench_with_input<ID: IntoBenchmarkId, F, I, InputFn>(
         &mut self,
         id: ID,
-        input: &I,
+        input: InputFn,
         f: F,
     ) -> &mut Self
     where
-        F: FnMut(&mut Bencher<'_, M>, &I),
-        I: ?Sized,
+        F: FnMut(&mut Bencher<'_, M>, &mut I),
+        InputFn: FnOnce() -> I,
     {
         self.run_bench(id.into_benchmark_id(), input, f);
         self
     }
 
-    fn run_bench<F, I>(&mut self, id: BenchmarkId, input: &I, f: F)
+    fn run_bench<F, InputFn, I>(&mut self, id: BenchmarkId, input: InputFn, f: F)
     where
-        F: FnMut(&mut Bencher<'_, M>, &I),
-        I: ?Sized,
+        F: FnMut(&mut Bencher<'_, M>, &mut I),
+        InputFn: FnOnce() -> I,
     {
         let config = self.partial_config.to_complete(&self.criterion.config);
         let report_context = ReportContext {
@@ -322,7 +322,7 @@ impl<'a, M: Measurement> BenchmarkGroup<'a, M> {
                         &config,
                         self.criterion,
                         &report_context,
-                        input,
+                        &mut input(),
                         self.throughput.clone(),
                     );
                 }
@@ -336,7 +336,7 @@ impl<'a, M: Measurement> BenchmarkGroup<'a, M> {
                 if do_run {
                     // In test mode, run the benchmark exactly once, then exit.
                     self.criterion.report.test_start(&id, &report_context);
-                    func.test(&self.criterion.measurement, input);
+                    func.test(&self.criterion.measurement, &mut input());
                     self.criterion.report.test_pass(&id, &report_context);
                 }
             }
@@ -348,7 +348,7 @@ impl<'a, M: Measurement> BenchmarkGroup<'a, M> {
                         self.criterion,
                         &report_context,
                         duration,
-                        input,
+                        &mut input(),
                     );
                 }
             }
@@ -427,12 +427,18 @@ impl BenchmarkId {
     /// let mut criterion = Criterion::default();
     /// let mut group = criterion.benchmark_group("My Group");
     /// // Generate a very large input
-    /// let input : String = ::std::iter::repeat("X").take(1024 * 1024).collect();
+    /// let input = || -> String {
+    ///     ::std::iter::repeat("X").take(1024 * 1024).collect()
+    /// };
     ///
     /// // Note that we don't have to use the input as the parameter in the ID
-    /// group.bench_with_input(BenchmarkId::new("Test long string", "1MB X's"), &input, |b, i| {
-    ///     b.iter(|| i.len())
-    /// });
+    /// group.bench_with_input(
+    ///     BenchmarkId::new("Test long string", "1MB X's"),
+    ///     input,
+    ///     |b, i| {
+    ///         b.iter(|| i.len())
+    ///     }
+    /// );
     /// ```
     pub fn new<S: Into<String>, P: ::std::fmt::Display>(
         function_name: S,

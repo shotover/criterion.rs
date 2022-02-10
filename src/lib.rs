@@ -1169,7 +1169,8 @@ where
     ///     // Setup (construct data, allocate memory, etc)
     ///     let input = 5u64;
     ///     c.bench_with_input(
-    ///         BenchmarkId::new("function_name", input), &input,
+    ///         BenchmarkId::new("function_name", input),
+    ///         || input,
     ///         |b, i| b.iter(|| {
     ///             // Code to benchmark using input `i` goes here
     ///         }),
@@ -1179,9 +1180,15 @@ where
     /// criterion_group!(benches, bench);
     /// criterion_main!(benches);
     /// ```
-    pub fn bench_with_input<F, I>(&mut self, id: BenchmarkId, input: &I, f: F) -> &mut Criterion<M>
+    pub fn bench_with_input<F, I, InputFn>(
+        &mut self,
+        id: BenchmarkId,
+        input: InputFn,
+        f: F,
+    ) -> &mut Criterion<M>
     where
-        F: FnMut(&mut Bencher<'_, M>, &I),
+        F: FnMut(&mut Bencher<'_, M>, &mut I),
+        InputFn: FnOnce() -> I,
     {
         // It's possible to use BenchmarkId::from_parameter to create a benchmark ID with no function
         // name. That's intended for use with BenchmarkGroups where the function name isn't necessary,
